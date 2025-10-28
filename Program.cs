@@ -3,33 +3,20 @@ using System.IO;
 
 namespace GeometryShapes
 {
-    // ============= Interfaces =============
+    // ============= ILogger.cs =============
     
     /// <summary>
-    /// Інтерфейс для логування
+    /// Інтерфейс для логування повідомлень
     /// </summary>
     public interface ILogger
     {
         void LogInfo(string message);
     }
     
-    /// <summary>
-    /// Інтерфейс для трикутників
-    /// </summary>
-    public interface ITriangle
-    {
-        double SideA { get; set; }
-        double SideB { get; set; }
-        double SideC { get; set; }
-        
-        bool IsValidTriangle();
-        string GetTriangleType();
-    }
-    
-    // ============= Loggers =============
+    // ============= ConsoleLogger.cs =============
     
     /// <summary>
-    /// Логер для виведення в консоль
+    /// Логер для виведення повідомлень в консоль
     /// </summary>
     public class ConsoleLogger : ILogger
     {
@@ -39,40 +26,98 @@ namespace GeometryShapes
         }
     }
     
+    // ============= FileLogger.cs =============
+    
     /// <summary>
-    /// Логер для запису у файл
+    /// Логер для запису повідомлень у файл з підтримкою IDisposable
     /// </summary>
-    public class FileLogger : ILogger
+    public class FileLogger : ILogger, IDisposable
     {
         private readonly string _filePath;
+        private StreamWriter _writer;
+        private bool _disposed = false;
         
         public FileLogger(string filePath = "geometry.log")
         {
             _filePath = filePath;
+            _writer = new StreamWriter(_filePath, append: true) { AutoFlush = true };
         }
         
         public void LogInfo(string message)
         {
+            if (_disposed)
+                throw new ObjectDisposedException(nameof(FileLogger));
+                
             try
             {
-                File.AppendAllText(_filePath, 
-                    $"[LOG] {DateTime.Now:yyyy-MM-dd HH:mm:ss}: {message}\n");
+                _writer.WriteLine($"[LOG] {DateTime.Now:yyyy-MM-dd HH:mm:ss}: {message}");
             }
             catch (Exception ex)
             {
                 Console.WriteLine($"Помилка запису в файл: {ex.Message}");
+                throw;
             }
+        }
+        
+        public void Dispose()
+        {
+            Dispose(true);
+            GC.SuppressFinalize(this);
+        }
+        
+        protected virtual void Dispose(bool disposing)
+        {
+            if (!_disposed)
+            {
+                if (disposing)
+                {
+                    _writer?.Dispose();
+                }
+                _disposed = true;
+            }
+        }
+        
+        ~FileLogger()
+        {
+            Dispose(false);
         }
     }
     
-    // ============= Abstract Classes =============
+    // ============= ITriangle.cs =============
     
     /// <summary>
-    /// Абстрактний клас для геометричних фігур
+    /// Інтерфейс для роботи з трикутниками
+    /// </summary>
+    public interface ITriangle
+    {
+        double SideA { get; }
+        double SideB { get; }
+        double SideC { get; }
+        
+        bool IsValidTriangle();
+        string GetTriangleType();
+        void UpdateSides(double a, double b, double c);
+    }
+    
+    // ============= IPrintable.cs =============
+    
+    /// <summary>
+    /// Інтерфейс для об'єктів, що можуть бути виведені
+    /// </summary>
+    public interface IPrintable
+    {
+        string GetDetailedInfo();
+        void Print();
+    }
+    
+    // ============= Shape.cs =============
+    
+    /// <summary>
+    /// Абстрактний базовий клас для геометричних фігур
     /// </summary>
     public abstract class Shape
     {
-        private const double Tolerance = 0.0001;
+        protected const double Tolerance = 0.0001;
         private string _name;
         protected readonly ILogger _logger;
         
@@ -112,20 +157,39 @@ namespace GeometryShapes
         /// <summary>
         /// Порівняння дробових чисел з допуском
         /// </summary>
-        protected static bool AreEqual(double a, double b)
-        {
-            return Math.Abs(a - b) < Tolerance;
-        }
-        
-        protected static double Tolerance => 0.0001;
+        protected static bool AreEqual(double a, double b) => 
+            Math.Abs(a - b) < Tolerance;
     }
     
-    // ============= Classes =============
+    // ============= Polygon.cs =============
+    
+    /// <summary>
+    /// Абстрактний клас для багатокутників
+    /// </summary>
+    public abstract class Polygon : Shape
+    {
+        protected Polygon(string name, ILogger logger = null) 
+            : base(name, logger)
+        {
+        }
+        
+        /// <summary>
+        /// Повертає кількість сторін багатокутника
+        /// </summary>
+        public abstract int GetSidesCount();
+        
+        /// <summary>
+        /// Перевіряє, чи є багатокутник опуклим
+        /// </summary>
+        public abstract bool IsConvex();
+    }
+    
+    // ============= Triangle.cs =============
     
     /// <summary>
     /// Клас для роботи з трикутниками
     /// </summary>
-    public class Triangle : Shape, ITriangle
+    public class Triangle : Polygon, ITriangle, IPrintable
     {
         private double _sideA;
         private double _sideB;
@@ -134,49 +198,52 @@ namespace GeometryShapes
         public Triangle(double a, double b, double c, ILogger logger = null) 
             : base("Трикутник", logger)
         {
-            ValidateSides(a, b, c);
+            ValidateSide(a, "Сторона A");
+            ValidateSide(b, "Сторона B");
+            ValidateSide(c, "Сторона C");
+            
+            if (!CheckTriangleInequality(a, b, c))
+            {
+                throw new ArgumentException(
+                    $"Сторони {a:F2}, {b:F2}, {c:F2} не утворюють дійсний трикутник");
+            }
+            
             _sideA = a;
             _sideB = b;
             _sideC = c;
             
-            if (!IsValidTriangle())
-            {
-                throw new ArgumentException(
-                    "Сторони не утворюють дійсний трикутник (не виконується нерівність трикутника)");
-            }
-            
             _logger.LogInfo($"Трикутник створено: a={a:F2}, b={b:F2}, c={c:F2}");
         }
         
-        public double SideA 
-        { 
-            get => _sideA;
-            set 
-            { 
-                ValidateSide(value, nameof(SideA));
-                _sideA = value;
+        public double SideA => _sideA;
+        public double SideB => _sideB;
+        public double SideC => _sideC;
+        
+        /// <summary>
+        /// Атомарне оновлення всіх трьох сторін з валідацією
+        /// </summary>
+        public void UpdateSides(double a, double b, double c)
+        {
+            ValidateSide(a, "Сторона A");
+            ValidateSide(b, "Сторона B");
+            ValidateSide(c, "Сторона C");
+            
+            if (!CheckTriangleInequality(a, b, c))
+            {
+                throw new ArgumentException(
+                    $"Нові сторони {a:F2}, {b:F2}, {c:F2} не утворюють дійсний трикутник");
             }
+            
+            _sideA = a;
+            _sideB = b;
+            _sideC = c;
+            
+            _logger.LogInfo($"Сторони оновлено: a={a:F2}, b={b:F2}, c={c:F2}");
         }
         
-        public double SideB 
-        { 
-            get => _sideB;
-            set 
-            { 
-                ValidateSide(value, nameof(SideB));
-                _sideB = value;
-            }
-        }
+        public override int GetSidesCount() => 3;
         
-        public double SideC 
-        { 
-            get => _sideC;
-            set 
-            { 
-                ValidateSide(value, nameof(SideC));
-                _sideC = value;
-            }
-        }
+        public override bool IsConvex() => true; // Всі трикутники опуклі
         
         public override double CalculatePerimeter()
         {
@@ -201,12 +268,8 @@ namespace GeometryShapes
             return area;
         }
         
-        public bool IsValidTriangle()
-        {
-            return (_sideA + _sideB > _sideC) && 
-                   (_sideA + _sideC > _sideB) && 
-                   (_sideB + _sideC > _sideA);
-        }
+        public bool IsValidTriangle() => 
+            CheckTriangleInequality(_sideA, _sideB, _sideC);
         
         public virtual string GetTriangleType()
         {
@@ -223,25 +286,37 @@ namespace GeometryShapes
                 return "Різносторонній";
         }
         
+        public string GetDetailedInfo()
+        {
+            return $"{ToString()}\nТип: {GetTriangleType()}\n" +
+                   $"Кількість сторін: {GetSidesCount()}\n" +
+                   $"Опуклість: {(IsConvex() ? "Так" : "Ні")}";
+        }
+        
+        public void Print()
+        {
+            Console.WriteLine(GetDetailedInfo());
+        }
+        
         public override string ToString()
         {
             return base.ToString() + $"\nТип: {GetTriangleType()}";
         }
         
-        private void ValidateSide(double side, string paramName)
+        private static void ValidateSide(double side, string sideName)
         {
             if (side <= 0)
-                throw new ArgumentOutOfRangeException(paramName, 
-                    "Сторона трикутника повинна бути більшою за нуль");
+                throw new ArgumentOutOfRangeException(sideName, 
+                    $"{sideName} повинна бути більшою за нуль (отримано: {side})");
         }
         
-        private void ValidateSides(double a, double b, double c)
+        private static bool CheckTriangleInequality(double a, double b, double c)
         {
-            ValidateSide(a, nameof(a));
-            ValidateSide(b, nameof(b));
-            ValidateSide(c, nameof(c));
+            return (a + b > c) && (a + c > b) && (b + c > a);
         }
     }
+    
+    // ============= RightTriangle.cs =============
     
     /// <summary>
     /// Клас для роботи з прямокутними трикутниками
@@ -282,7 +357,7 @@ namespace GeometryShapes
             if (!CheckRightTriangle(sides[0], sides[1], sides[2]))
             {
                 throw new ArgumentException(
-                    "Задані сторони не утворюють прямокутний трикутник");
+                    $"Задані сторони {a:F2}, {b:F2}, {c:F2} не утворюють прямокутний трикутник");
             }
             
             _cathetus1 = sides[0];
@@ -296,10 +371,8 @@ namespace GeometryShapes
         public double Cathetus2 => _cathetus2;
         public double Hypotenuse => _hypotenuse;
         
-        private static double CalculateHypotenuse(double cathetus1, double cathetus2)
-        {
-            return Math.Sqrt(cathetus1 * cathetus1 + cathetus2 * cathetus2);
-        }
+        private static double CalculateHypotenuse(double cathetus1, double cathetus2) =>
+            Math.Sqrt(cathetus1 * cathetus1 + cathetus2 * cathetus2);
         
         /// <summary>
         /// Перевіряє, чи є трикутник прямокутним за теоремою Піфагора
@@ -327,10 +400,7 @@ namespace GeometryShapes
             return area;
         }
         
-        public override string GetTriangleType()
-        {
-            return "Прямокутний трикутник";
-        }
+        public override string GetTriangleType() => "Прямокутний трикутник";
         
         public override string ToString()
         {
@@ -344,7 +414,55 @@ namespace GeometryShapes
         }
     }
     
-    // ============= Program =============
+    // ============= Circle.cs =============
+    
+    /// <summary>
+    /// Клас для роботи з колами (демонстрація іншої фігури)
+    /// </summary>
+    public class Circle : Shape, IPrintable
+    {
+        private double _radius;
+        
+        public Circle(double radius, ILogger logger = null) 
+            : base("Коло", logger)
+        {
+            if (radius <= 0)
+                throw new ArgumentOutOfRangeException(nameof(radius), 
+                    "Радіус повинен бути більшим за нуль");
+                
+            _radius = radius;
+            _logger.LogInfo($"Коло створено: радіус={radius:F2}");
+        }
+        
+        public double Radius => _radius;
+        
+        public override double CalculatePerimeter()
+        {
+            double perimeter = 2 * Math.PI * _radius;
+            _logger.LogInfo($"Обчислено довжину кола: {perimeter:F2}");
+            return perimeter;
+        }
+        
+        public override double CalculateArea()
+        {
+            double area = Math.PI * _radius * _radius;
+            _logger.LogInfo($"Обчислено площу кола: {area:F2}");
+            return area;
+        }
+        
+        public string GetDetailedInfo()
+        {
+            return $"{ToString()}\nРадіус: {_radius:F2}\n" +
+                   $"Діаметр: {2 * _radius:F2}";
+        }
+        
+        public void Print()
+        {
+            Console.WriteLine(GetDetailedInfo());
+        }
+    }
+    
+    // ============= Program.cs =============
     
     class Program
     {
@@ -352,87 +470,164 @@ namespace GeometryShapes
         {
             Console.OutputEncoding = System.Text.Encoding.UTF8;
             
+            FileLogger fileLogger = null;
+            
             try
             {
-                Console.WriteLine("=== Демонстрація роботи з трикутниками ===\n");
+                Console.WriteLine("=== Демонстрація роботи з геометричними фігурами ===\n");
                 
                 // Створення логерів
                 ILogger consoleLogger = new ConsoleLogger();
-                ILogger fileLogger = new FileLogger("geometry.log");
+                fileLogger = new FileLogger("geometry.log");
                 
                 // Демонстрація використання інтерфейсу ITriangle
-                Console.WriteLine("--- Демонстрація поліморфізму через інтерфейс ---\n");
-                
-                ITriangle triangle1 = new Triangle(5, 6, 7, consoleLogger);
-                ITriangle triangle2 = new RightTriangle(3, 4, fileLogger);
-                
-                DisplayTriangleInfo(triangle1);
-                Console.WriteLine();
-                DisplayTriangleInfo(triangle2);
+                Console.WriteLine("--- 1. Поліморфізм через інтерфейс ITriangle ---\n");
+                DemonstrateITriangle(consoleLogger, fileLogger);
                 
                 Console.WriteLine("\n" + new string('=', 60) + "\n");
                 
                 // Демонстрація поліморфізму через абстрактний клас Shape
-                Console.WriteLine("--- Демонстрація поліморфізму через Shape ---\n");
-                
-                Shape[] shapes = 
-                {
-                    new Triangle(8, 10, 12, consoleLogger),
-                    new RightTriangle(5, 12, consoleLogger),
-                    new RightTriangle(6, 8, 10, fileLogger)
-                };
-                
-                DisplayShapesInfo(shapes);
+                Console.WriteLine("--- 2. Поліморфізм через абстрактний клас Shape ---\n");
+                DemonstrateShapePolymorphism(consoleLogger, fileLogger);
                 
                 Console.WriteLine("\n" + new string('=', 60) + "\n");
                 
-                // Порівняння характеристик
-                Console.WriteLine("--- Порівняння трикутників ---\n");
-                CompareTriangles(shapes);
+                // Демонстрація інтерфейсу IPrintable
+                Console.WriteLine("--- 3. Поліморфізм через інтерфейс IPrintable ---\n");
+                DemonstrateIPrintable(consoleLogger, fileLogger);
+                
+                Console.WriteLine("\n" + new string('=', 60) + "\n");
+                
+                // Демонстрація абстрактного класу Polygon
+                Console.WriteLine("--- 4. Робота з абстрактним класом Polygon ---\n");
+                DemonstratePolygon(consoleLogger);
+                
+                Console.WriteLine("\n" + new string('=', 60) + "\n");
+                
+                // Демонстрація атомарного оновлення сторін
+                Console.WriteLine("--- 5. Оновлення сторін трикутника ---\n");
+                DemonstrateUpdateSides(consoleLogger);
                 
                 Console.WriteLine("\n" + new string('=', 60) + "\n");
                 
                 // Демонстрація обробки помилок
-                Console.WriteLine("--- Демонстрація валідації ---\n");
+                Console.WriteLine("--- 6. Валідація та обробка помилок ---\n");
                 TestValidation();
                 
-                Console.WriteLine("\nПрограма завершила роботу успішно!");
-                Console.WriteLine("Логи збережено у файл geometry.log");
+                Console.WriteLine("\n" + new string('=', 60) + "\n");
+                
+                Console.WriteLine("✓ Програма завершила роботу успішно!");
+                Console.WriteLine("✓ Логи збережено у файл geometry.log");
             }
             catch (Exception ex)
             {
-                Console.WriteLine($"\nКритична помилка: {ex.Message}");
+                Console.WriteLine($"\n✗ Критична помилка: {ex.Message}");
+            }
+            finally
+            {
+                // Демонстрація деструктора через IDisposable
+                fileLogger?.Dispose();
+                Console.WriteLine("\n[Деструктор] FileLogger знищено та ресурси звільнено");
             }
         }
         
-        /// <summary>
-        /// Виводить інформацію про трикутник через інтерфейс
-        /// </summary>
-        static void DisplayTriangleInfo(ITriangle triangle)
+        static void DemonstrateITriangle(ILogger consoleLogger, ILogger fileLogger)
         {
-            Console.WriteLine($"Тип: {triangle.GetTriangleType()}");
-            Console.WriteLine($"Сторони: a={triangle.SideA:F2}, " +
-                            $"b={triangle.SideB:F2}, c={triangle.SideC:F2}");
-            Console.WriteLine($"Дійсність: {triangle.IsValidTriangle()}");
+            ITriangle triangle1 = new Triangle(5, 6, 7, consoleLogger);
+            ITriangle triangle2 = new RightTriangle(3, 4, fileLogger);
+            
+            DisplayTriangleInfo(triangle1, "Трикутник 1");
+            Console.WriteLine();
+            DisplayTriangleInfo(triangle2, "Трикутник 2");
         }
         
-        /// <summary>
-        /// Виводить інформацію про масив фігур через поліморфізм
-        /// </summary>
-        static void DisplayShapesInfo(Shape[] shapes)
+        static void DemonstrateShapePolymorphism(ILogger consoleLogger, ILogger fileLogger)
         {
+            Shape[] shapes = 
+            {
+                new Triangle(8, 10, 12, consoleLogger),
+                new RightTriangle(5, 12, consoleLogger),
+                new Circle(7.5, fileLogger)
+            };
+            
+            Console.WriteLine("Обхід масиву фігур через базовий тип Shape:\n");
+            
             for (int i = 0; i < shapes.Length; i++)
             {
-                Console.WriteLine($"Фігура #{i + 1}:");
-                Console.WriteLine(shapes[i].ToString());
+                Console.WriteLine($"Фігура #{i + 1}: {shapes[i].Name}");
+                Console.WriteLine($"  Периметр: {shapes[i].CalculatePerimeter():F2}");
+                Console.WriteLine($"  Площа: {shapes[i].CalculateArea():F2}");
+                Console.WriteLine();
+            }
+            
+            CompareShapes(shapes);
+        }
+        
+        static void DemonstrateIPrintable(ILogger consoleLogger, ILogger fileLogger)
+        {
+            IPrintable[] printables = 
+            {
+                new Triangle(6, 8, 10, consoleLogger),
+                new RightTriangle(3, 4, fileLogger),
+                new Circle(5, consoleLogger)
+            };
+            
+            Console.WriteLine("Виведення через інтерфейс IPrintable:\n");
+            
+            foreach (var item in printables)
+            {
+                item.Print();
+                Console.WriteLine(new string('-', 40));
+            }
+        }
+        
+        static void DemonstratePolygon(ILogger logger)
+        {
+            Polygon[] polygons = 
+            {
+                new Triangle(5, 7, 9, logger),
+                new RightTriangle(6, 8, logger)
+            };
+            
+            Console.WriteLine("Робота з багатокутниками:\n");
+            
+            foreach (var polygon in polygons)
+            {
+                Console.WriteLine($"{polygon.Name}:");
+                Console.WriteLine($"  Кількість сторін: {polygon.GetSidesCount()}");
+                Console.WriteLine($"  Опуклий: {(polygon.IsConvex() ? "Так" : "Ні")}");
+                Console.WriteLine($"  Периметр: {polygon.CalculatePerimeter():F2}");
+                Console.WriteLine($"  Площа: {polygon.CalculateArea():F2}");
                 Console.WriteLine();
             }
         }
         
-        /// <summary>
-        /// Порівнює характеристики трикутників
-        /// </summary>
-        static void CompareTriangles(Shape[] shapes)
+        static void DemonstrateUpdateSides(ILogger logger)
+        {
+            Triangle triangle = new Triangle(3, 4, 5, logger);
+            
+            Console.WriteLine("Початкові сторони:");
+            Console.WriteLine($"  a={triangle.SideA:F2}, b={triangle.SideB:F2}, c={triangle.SideC:F2}");
+            Console.WriteLine($"  Периметр: {triangle.CalculatePerimeter():F2}");
+            Console.WriteLine($"  Площа: {triangle.CalculateArea():F2}\n");
+            
+            triangle.UpdateSides(5, 12, 13);
+            
+            Console.WriteLine("Після оновлення сторін:");
+            Console.WriteLine($"  a={triangle.SideA:F2}, b={triangle.SideB:F2}, c={triangle.SideC:F2}");
+            Console.WriteLine($"  Периметр: {triangle.CalculatePerimeter():F2}");
+            Console.WriteLine($"  Площа: {triangle.CalculateArea():F2}");
+        }
+        
+        static void DisplayTriangleInfo(ITriangle triangle, string name)
+        {
+            Console.WriteLine($"{name}:");
+            Console.WriteLine($"  Тип: {triangle.GetTriangleType()}");
+            Console.WriteLine($"  Сторони: a={triangle.SideA:F2}, b={triangle.SideB:F2}, c={triangle.SideC:F2}");
+            Console.WriteLine($"  Дійсність: {triangle.IsValidTriangle()}");
+        }
+        
+        static void CompareShapes(Shape[] shapes)
         {
             double maxPerimeter = 0;
             double maxArea = 0;
@@ -457,45 +652,62 @@ namespace GeometryShapes
                 }
             }
             
-            Console.WriteLine($"Найбільший периметр: {maxPerimeter:F2} " +
-                            $"({largestByPerimeter.Name})");
-            Console.WriteLine($"Найбільша площа: {maxArea:F2} " +
-                            $"({largestByArea.Name})");
+            Console.WriteLine("Порівняння фігур:");
+            Console.WriteLine($"  Найбільший периметр: {maxPerimeter:F2} ({largestByPerimeter.Name})");
+            Console.WriteLine($"  Найбільша площа: {maxArea:F2} ({largestByArea.Name})");
         }
         
-        /// <summary>
-        /// Тестує валідацію даних
-        /// </summary>
         static void TestValidation()
         {
             try
             {
-                Console.WriteLine("Спроба створити трикутник з від'ємною стороною...");
+                Console.WriteLine("Тест 1: Від'ємна сторона...");
                 var invalid1 = new Triangle(-3, 4, 5);
             }
             catch (ArgumentOutOfRangeException ex)
             {
-                Console.WriteLine($"✓ Перехоплено помилку: {ex.Message}\n");
+                Console.WriteLine($"  ✓ Перехоплено: {ex.ParamName} - {ex.Message}\n");
             }
             
             try
             {
-                Console.WriteLine("Спроба створити недійсний трикутник (1, 2, 10)...");
+                Console.WriteLine("Тест 2: Недійсний трикутник (1, 2, 10)...");
                 var invalid2 = new Triangle(1, 2, 10);
             }
             catch (ArgumentException ex)
             {
-                Console.WriteLine($"✓ Перехоплено помилку: {ex.Message}\n");
+                Console.WriteLine($"  ✓ Перехоплено: {ex.Message}\n");
             }
             
             try
             {
-                Console.WriteLine("Спроба створити непрямокутний трикутник як RightTriangle...");
+                Console.WriteLine("Тест 3: Непрямокутний трикутник як RightTriangle...");
                 var invalid3 = new RightTriangle(3, 4, 6);
             }
             catch (ArgumentException ex)
             {
-                Console.WriteLine($"✓ Перехоплено помилку: {ex.Message}");
+                Console.WriteLine($"  ✓ Перехоплено: {ex.Message}\n");
+            }
+            
+            try
+            {
+                Console.WriteLine("Тест 4: Оновлення на недійсні сторони...");
+                var triangle = new Triangle(3, 4, 5);
+                triangle.UpdateSides(1, 2, 20);
+            }
+            catch (ArgumentException ex)
+            {
+                Console.WriteLine($"  ✓ Перехоплено: {ex.Message}\n");
+            }
+            
+            try
+            {
+                Console.WriteLine("Тест 5: Від'ємний радіус кола...");
+                var invalidCircle = new Circle(-5);
+            }
+            catch (ArgumentOutOfRangeException ex)
+            {
+                Console.WriteLine($"  ✓ Перехоплено: {ex.ParamName} - {ex.Message}");
             }
         }
     }
